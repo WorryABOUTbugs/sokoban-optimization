@@ -1,0 +1,47 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Исходные файлы">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Исходные файлы\lib">
+      <UniqueIdentifier>{9d90dc68-deab-41d6-9409-b4dd6c1c43d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Исходные файлы\include">
+      <UniqueIdentifier>{a4d1912f-173a-437d-89ae-f9d9671273ce}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Исходные файлы\bin">
+      <UniqueIdentifier>{ebfef8e8-1e42-4340-a9f0-aef9d1100568}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.c">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="lib\glew32.lib">
+      <Filter>Исходные файлы\lib</Filter>
+    </Library>
+    <Library Include="lib\glfw3dll.lib">
+      <Filter>Исходные файлы\lib</Filter>
+    </Library>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\glew.h">
+      <Filter>Исходные файлы\include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\glfw3.h">
+      <Filter>Исходные файлы\include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="bin\glew32.dll">
+      <Filter>Исходные файлы\bin</Filter>
+    </None>
+    <None Include="bin\glfw3.dll">
+      <Filter>Исходные файлы\bin</Filter>
+    </None>
+  </ItemGroup>
+</Project>
