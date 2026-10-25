@@ -856,7 +856,7 @@ static int generate_level(GameState* out)
     return pp;
 }
 
-static int generate_solvable_level(GameState* out)
+static int generate_solvable_level_impl(GameState* out)
 {
     for (int i = 0; i < 500; i++)
     {
@@ -866,6 +866,14 @@ static int generate_solvable_level(GameState* out)
         }
     }
     return 0;
+}
+
+static int generate_solvable_level(GameState* out)
+{
+    clock_t t0 = clock();
+    int ok = generate_solvable_level_impl(out);
+    printf("generate_solvable_level: %.1f ms\n", (clock() - t0) * 1000.0 / CLOCKS_PER_SEC);
+    return ok;
 }
 
 static void draw_digit(int d, float cx, float cy, float h)
@@ -1225,8 +1233,27 @@ static void key_callback(GLFWwindow* win, int key, int sc, int action, int mods)
     }
 }
 
-int main(void)
+static void run_time(int count)
 {
+    GameState g;
+    int ok = 0;
+    srand(12345);
+    clock_t t0 = clock();
+    for (int i = 0; i < count; i++)
+    {
+        ok += generate_solvable_level_impl(&g);
+    }
+    double ms = (clock() - t0) * 1000.0 / CLOCKS_PER_SEC;
+    printf(" levels=%d ok=%d total=%.1f ms avg=%.2f ms/level\n", count, ok, ms, ms / count);
+}
+
+int main(int argc, char** argv)
+{
+    if (argc > 1 && strcmp(argv[1], "-time") == 0)
+    {
+        run_time(argc > 2 ? atoi(argv[2]) : 100);
+        return 0;
+    }
     srand((unsigned int)time(NULL));
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
