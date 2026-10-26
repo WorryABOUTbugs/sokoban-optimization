@@ -625,103 +625,130 @@ static int is_safe_for_box(const GameState* s, int r, int c)
     return !is_corner_deadlock(s, r, c) && !is_wall_deadlock(s, r, c);
 }
 
-#define BFS_LIMIT 25000
+#define MAXB 8              
+#define BFS_LIMIT 1000000
+#define HASH_SIZE (1 << 21)
+
+typedef struct
+{
+    unsigned short player;
+    unsigned short box[MAXB];
+} PState;
+
+static unsigned int hash_state(const PState* p)
+{
+    unsigned int h = 2166136261u;
+    const unsigned char* b = (const unsigned char*)p;
+    for (size_t i = 0; i < sizeof(PState); i++)
+    {
+        h ^= b[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static int visited_insert(int* table, const PState* pool, int new_index)
+{
+    unsigned int h = hash_state(&pool[new_index]) & (HASH_SIZE - 1);
+    while (table[h] != -1)
+    {
+        if (memcmp(&pool[table[h]], &pool[new_index], sizeof(PState)) == 0)
+        {
+            return 0;
+        }
+        h = (h + 1) & (HASH_SIZE - 1);
+    }
+    table[h] = new_index;
+    return 1;
+}
 
 static int is_solvable(const GameState* s)
 {
-    typedef struct
-    {
-        char grid[MAX_ROWS][MAX_COLS];
-        int  pr;
-        int  pc;
-    } St;
-    St* pool = (St*)malloc(BFS_LIMIT * sizeof(St));
-    if (!pool)
-    {
-        return 0;
-    }
-    int head = 0;
-    int tail = 0;
-    for (int r = 0; r < s->rows; r++)
-    {
-        memcpy(pool[0].grid[r], s->grid[r], s->cols);
-    }
-    pool[0].pr = s->player_row;
-    pool[0].pc = s->player_col;
-    tail = 1;
-    int dr[4] = { -1, 1, 0, 0 };
-    int dc[4] = { 0, 0, -1, 1 };
-    while (head < tail && tail < BFS_LIMIT - 8)
-    {
-        St cur = pool[head++];
-        int win = 1;
-        for (int r = 0; r < s->rows && win; r++)
-        {
-            for (int c = 0; c < s->cols && win; c++)
-            {
-                if (cur.grid[r][c] == TILE_BOX)
-                {
-                    win = 0;
-                }
+    static const int dr[4] = { -1, 1, 0, 0 };
+    static const int dc[4] = { 0, 0, -1, 1 };
+
+    char wall[MAX_ROWS][MAX_COLS] = { 0 };
+    char target[MAX_ROWS][MAX_COLS] = { 0 };
+    PState start;
+    memset(&start, 0, sizeof(start));
+    int nb = 0;
+
+    for (int r = 0; r < s->rows; r++){
+        for (int c = 0; c < s->cols; c++){
+            char ch = s->grid[r][c];
+            wall[r][c] = (ch == TILE_WALL);
+            target[r][c] = (ch == TILE_TARGET || ch == TILE_BOX_ON_TARGET || ch == TILE_PLAYER_ON_TARGET);
+            if (ch == TILE_BOX || ch == TILE_BOX_ON_TARGET){
+                if (nb == MAXB) { return 0; }
+                start.box[nb++] = (unsigned short)(r * MAX_COLS + c);
             }
         }
-        if (win)
+    }
+    start.player = (unsigned short)(s->player_row * MAX_COLS + s->player_col);
+    for (int i = 1; i < nb; i++) {
+        unsigned short v = start.box[i];
+        int j = i - 1;
+        while (j >= 0 && start.box[j] > v) { start.box[j + 1] = start.box[j]; j--; }
+        start.box[j + 1] = v;
+    }
+
+    PState* pool = (PState*)malloc((size_t)BFS_LIMIT * sizeof(PState));
+    int* table = (int*)malloc((size_t)HASH_SIZE * sizeof(int));
+    if (!pool || !table) { free(pool); free(table); return 0; }
+    memset(table, 0xFF, (size_t)HASH_SIZE * sizeof(int)); 
+
+    int head = 0, tail = 0;
+    pool[tail] = start;
+    visited_insert(table, pool, tail);
+    tail++;
+
+    while (head < tail)
+    {
+        PState cur = pool[head++];
+
+        int win = 1;
+        for (int i = 0; i < nb && win; i++)
         {
-            free(pool);
-            return 1;
+            win = target[cur.box[i] / MAX_COLS][cur.box[i] % MAX_COLS];
         }
+        if (win) { free(pool); free(table); return 1; }
+
+        int pr = cur.player / MAX_COLS, pc = cur.player % MAX_COLS;
         for (int d = 0; d < 4; d++)
         {
-            St nx = cur;
-            int nr = nx.pr + dr[d];
-            int nc = nx.pc + dc[d];
-            if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols)
+            int nr = pr + dr[d], nc = pc + dc[d];
+            if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols || wall[nr][nc]) { continue; }
+
+            PState nx = cur;
+            int pos = nr * MAX_COLS + nc;
+            int bi = -1;
+            for (int i = 0; i < nb; i++) { if (cur.box[i] == pos) { bi = i; break; } }
+            if (bi >= 0)
             {
-                continue;
-            }
-            char dest = nx.grid[nr][nc];
-            if (dest == TILE_WALL)
-            {
-                continue;
-            }
-            if (dest == TILE_BOX || dest == TILE_BOX_ON_TARGET)
-            {
-                int br = nr + dr[d];
-                int bc = nc + dc[d];
-                if (br < 0 || br >= s->rows || bc < 0 || bc >= s->cols)
+                int br = nr + dr[d], bc = nc + dc[d];
+                if (br < 0 || br >= s->rows || bc < 0 || bc >= s->cols || wall[br][bc]) { continue; }
+                int bpos = br * MAX_COLS + bc;
+                int blocked = 0;
+                for (int i = 0; i < nb; i++) { if (cur.box[i] == bpos) { blocked = 1; break; } }
+                if (blocked) { continue; }
+                nx.box[bi] = (unsigned short)bpos;
+                for (int i = bi; i > 0 && nx.box[i - 1] > nx.box[i]; i--)
                 {
-                    continue;
+                    unsigned short t = nx.box[i]; nx.box[i] = nx.box[i - 1]; nx.box[i - 1] = t;
                 }
-                char beh = nx.grid[br][bc];
-                if (beh == TILE_WALL || beh == TILE_BOX || beh == TILE_BOX_ON_TARGET)
+                for (int i = bi; i < nb - 1 && nx.box[i + 1] < nx.box[i]; i++)
                 {
-                    continue;
-                }
-                nx.grid[nr][nc] = (dest == TILE_BOX_ON_TARGET) ? TILE_TARGET : TILE_EMPTY;
-                nx.grid[br][bc] = (beh == TILE_TARGET) ? TILE_BOX_ON_TARGET : TILE_BOX;
-            }
-            char ct = nx.grid[nx.pr][nx.pc];
-            nx.grid[nx.pr][nx.pc] = (ct == TILE_PLAYER_ON_TARGET) ? TILE_TARGET : TILE_EMPTY;
-            nx.grid[nr][nc] = (nx.grid[nr][nc] == TILE_TARGET) ? TILE_PLAYER_ON_TARGET : TILE_PLAYER;
-            nx.pr = nr;
-            nx.pc = nc;
-            int dup = 0;
-            int from = (head > 150) ? head - 150 : 0;
-            for (int i = from; i < tail && !dup; i++)
-            {
-                if (pool[i].pr == nx.pr && pool[i].pc == nx.pc &&
-                    memcmp(pool[i].grid, nx.grid, s->rows * MAX_COLS) == 0)
-                {
-                    dup = 1;
+                    unsigned short t = nx.box[i]; nx.box[i] = nx.box[i + 1]; nx.box[i + 1] = t;
                 }
             }
-            if (!dup)
-            {
-                pool[tail++] = nx;
-            }
+            nx.player = (unsigned short)pos;
+
+            if (tail >= BFS_LIMIT) { continue; }
+            pool[tail] = nx;
+            if (visited_insert(table, pool, tail)) { tail++; }
         }
     }
-    free(pool);
+    free(pool); free(table);
     return 0;
 }
 
@@ -1244,7 +1271,7 @@ static void run_time(int count)
         ok += generate_solvable_level_impl(&g);
     }
     double ms = (clock() - t0) * 1000.0 / CLOCKS_PER_SEC;
-    printf(" levels=%d ok=%d total=%.1f ms avg=%.2f ms/level\n", count, ok, ms, ms / count);
+    printf("levels=%d ok=%d total=%.1f ms avg=%.2f ms/level\n", count, ok, ms, ms / count);
 }
 
 int main(int argc, char** argv)
