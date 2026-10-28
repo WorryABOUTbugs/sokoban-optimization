@@ -297,22 +297,6 @@ static int check_win(void)
     return 1;
 }
 
-static int count_boxes_on_target(const GameState* s)
-{
-    int n = 0;
-    for (int r = 0; r < s->rows; r++)
-    {
-        for (int c = 0; c < s->cols; c++)
-        {
-            if (s->grid[r][c] == TILE_BOX_ON_TARGET)
-            {
-                n++;
-            }
-        }
-    }
-    return n;
-}
-
 static int hint_step = 0;
 static int hint_hl_r = -1;
 static int hint_hl_c = -1;
@@ -523,107 +507,7 @@ static int is_corner_deadlock(const GameState* s, int r, int c)
     return (wu || wd) && (wl || wr);
 }
 
-static int is_wall_deadlock(const GameState* s, int r, int c)
-{
-    int wu = (r <= 0) || (s->grid[r - 1][c] == TILE_WALL);
-    int wd = (r >= s->rows - 1) || (s->grid[r + 1][c] == TILE_WALL);
-    if (wu || wd)
-    {
-        int has = (s->grid[r][c] == TILE_TARGET);
-        for (int cc = c - 1; cc >= 0 && !has; cc--)
-        {
-            if (s->grid[r][cc] == TILE_WALL)
-            {
-                break;
-            }
-            int sw = wu ? (cc <= 0 || s->grid[r - 1][cc] == TILE_WALL)
-                : (cc >= s->cols - 1 || s->grid[r + 1][cc] == TILE_WALL);
-            if (!sw)
-            {
-                has = 1;
-                break;
-            }
-            if (s->grid[r][cc] == TILE_TARGET)
-            {
-                has = 1;
-            }
-        }
-        for (int cc = c + 1; cc < s->cols && !has; cc++)
-        {
-            if (s->grid[r][cc] == TILE_WALL)
-            {
-                break;
-            }
-            int sw = wu ? (cc <= 0 || s->grid[r - 1][cc] == TILE_WALL)
-                : (cc >= s->cols - 1 || s->grid[r + 1][cc] == TILE_WALL);
-            if (!sw)
-            {
-                has = 1;
-                break;
-            }
-            if (s->grid[r][cc] == TILE_TARGET)
-            {
-                has = 1;
-            }
-        }
-        if (!has)
-        {
-            return 1;
-        }
-    }
-    int wl = (c <= 0) || (s->grid[r][c - 1] == TILE_WALL);
-    int wr2 = (c >= s->cols - 1) || (s->grid[r][c + 1] == TILE_WALL);
-    if (wl || wr2)
-    {
-        int has = (s->grid[r][c] == TILE_TARGET);
-        for (int rr = r - 1; rr >= 0 && !has; rr--)
-        {
-            if (s->grid[rr][c] == TILE_WALL)
-            {
-                break;
-            }
-            int sw = wl ? (c <= 0 || s->grid[rr][c - 1] == TILE_WALL)
-                : (c >= s->cols - 1 || s->grid[rr][c + 1] == TILE_WALL);
-            if (!sw)
-            {
-                has = 1;
-                break;
-            }
-            if (s->grid[rr][c] == TILE_TARGET)
-            {
-                has = 1;
-            }
-        }
-        for (int rr = r + 1; rr < s->rows && !has; rr++)
-        {
-            if (s->grid[rr][c] == TILE_WALL)
-            {
-                break;
-            }
-            int sw = wl ? (c <= 0 || s->grid[rr][c - 1] == TILE_WALL)
-                : (c >= s->cols - 1 || s->grid[rr][c + 1] == TILE_WALL);
-            if (!sw)
-            {
-                has = 1;
-                break;
-            }
-            if (s->grid[rr][c] == TILE_TARGET)
-            {
-                has = 1;
-            }
-        }
-        if (!has)
-        {
-            return 1;
-        }
-    }
-    return 0;
-}
 
-static int is_safe_for_box(const GameState* s, int r, int c)
-{
-    return !is_corner_deadlock(s, r, c) && !is_wall_deadlock(s, r, c);
-}
 
 #define MAXB 8              
 #define BFS_LIMIT 1000000
@@ -752,6 +636,54 @@ static int is_solvable(const GameState* s)
     return 0;
 }
 
+static void alive_cells(const GameState* s, char alive[MAX_ROWS][MAX_COLS])
+{
+    static const int dr[4] = { -1, 1, 0, 0 };
+    static const int dc[4] = { 0, 0, -1, 1 };
+    int queue[MAX_ROWS * MAX_COLS];
+    int head = 0;
+    int tail = 0;
+    memset(alive, 0, MAX_ROWS * MAX_COLS);
+    for (int r = 0; r < s->rows; r++)
+    {
+        for (int c = 0; c < s->cols; c++)
+        {
+            if (s->grid[r][c] == TILE_TARGET)
+            {
+                alive[r][c] = 1;
+                queue[tail++] = r * MAX_COLS + c;
+            }
+        }
+    }
+    while (head < tail)
+    {
+        int br = queue[head] / MAX_COLS;
+        int bc = queue[head] % MAX_COLS;
+        head++;
+        for (int d = 0; d < 4; d++)
+        {
+            int r1 = br + dr[d];
+            int c1 = bc + dc[d];
+            int r2 = br + 2 * dr[d];
+            int c2 = bc + 2 * dc[d];
+            if (r2 < 0 || r2 >= s->rows || c2 < 0 || c2 >= s->cols)
+            {
+                continue;
+            }
+            if (s->grid[r1][c1] == TILE_WALL || s->grid[r2][c2] == TILE_WALL)
+            {
+                continue;
+            }
+            if (alive[r1][c1])
+            {
+                continue;
+            }
+            alive[r1][c1] = 1;
+            queue[tail++] = r1 * MAX_COLS + c1;
+        }
+    }
+}
+
 static int generate_level(GameState* out)
 {
     int W = 7 + rand() % 3;
@@ -833,8 +765,12 @@ static int generate_level(GameState* out)
         int c = tc[i] % MAX_COLS;
         out->grid[r][c] = TILE_TARGET;
     }
+    char alive[MAX_ROWS][MAX_COLS];
+    alive_cells(out, alive);
     int bc2[MAX_ROWS * MAX_COLS];
     int bn = 0;
+    int bs[MAX_ROWS * MAX_COLS];
+    int bsn = 0;
     for (int r = 1; r < H - 1; r++)
     {
         for (int c = 1; c < W - 1; c++)
@@ -842,8 +778,27 @@ static int generate_level(GameState* out)
             if (out->grid[r][c] == TILE_EMPTY)
             {
                 bc2[bn++] = r * MAX_COLS + c;
+                if (alive[r][c])
+                {
+                    bs[bsn++] = r * MAX_COLS + c;
+                }
             }
         }
+    }
+    if (bsn < NB)
+    {
+        return 0;
+    }
+    for (int i = bsn - 1; i > 0; i--)
+    {
+        int j = rand() % (i + 1);
+        int t = bs[i];
+        bs[i] = bs[j];
+        bs[j] = t;
+    }
+    for (int i = 0; i < NB; i++)
+    {
+        out->grid[bs[i] / MAX_COLS][bs[i] % MAX_COLS] = TILE_BOX;
     }
     for (int i = bn - 1; i > 0; i--)
     {
@@ -852,21 +807,7 @@ static int generate_level(GameState* out)
         bc2[i] = bc2[j];
         bc2[j] = t;
     }
-    int placed = 0;
-    for (int i = 0; i < bn && placed < NB; i++)
-    {
-        int r = bc2[i] / MAX_COLS;
-        int c = bc2[i] % MAX_COLS;
-        if (is_safe_for_box(out, r, c))
-        {
-            out->grid[r][c] = TILE_BOX;
-            placed++;
-        }
-    }
-    if (placed < NB)
-    {
-        return 0;
-    }
+
     int pp = 0;
     for (int i = 0; i < bn && !pp; i++)
     {
@@ -883,14 +824,23 @@ static int generate_level(GameState* out)
     return pp;
 }
 
+static long g_solver_calls = 0;
+static long g_unsolvable = 0;
+
 static int generate_solvable_level_impl(GameState* out)
 {
     for (int i = 0; i < 500; i++)
     {
-        if (generate_level(out) && is_solvable(out))
+        if (!generate_level(out))
+        {
+            continue;
+        }
+        g_solver_calls++;
+        if (is_solvable(out))
         {
             return 1;
         }
+        g_unsolvable++;
     }
     return 0;
 }
@@ -1272,6 +1222,7 @@ static void run_time(int count)
     }
     double ms = (clock() - t0) * 1000.0 / CLOCKS_PER_SEC;
     printf("levels=%d ok=%d total=%.1f ms avg=%.2f ms/level\n", count, ok, ms, ms / count);
+    printf("solver_calls=%ld unsolvable=%ld (%.1f%%)\n", g_solver_calls, g_unsolvable, 100.0 * g_unsolvable / g_solver_calls);
 }
 
 int main(int argc, char** argv)
