@@ -509,9 +509,10 @@ static int is_corner_deadlock(const GameState* s, int r, int c)
 
 
 
-#define MAXB 8              
-#define BFS_LIMIT 1000000
-#define HASH_SIZE (1 << 21)
+#define MAXB            3
+#define BFS_LIMIT       1000000
+#define TABLE_MIN_BITS  12
+#define TABLE_MAX_BITS  21
 
 typedef struct
 {
@@ -519,31 +520,62 @@ typedef struct
     unsigned short box[MAXB];
 } PState;
 
+typedef char pstate_must_8_bytes[(sizeof(PState) == 8) ? 1 : -1];
+
+static int g_table_start_bits = 18;
+
 static unsigned int hash_state(const PState* p)
 {
-    unsigned int h = 2166136261u;
-    const unsigned char* b = (const unsigned char*)p;
-    for (size_t i = 0; i < sizeof(PState); i++)
-    {
-        h ^= b[i];
-        h *= 16777619u;
-    }
-    return h;
+    unsigned long long x;
+    memcpy(&x, p, sizeof(x));
+    return (unsigned int)((x * 0x9E3779B97F4A7C15ULL) >> 32);
 }
 
-static int visited_insert(int* table, const PState* pool, int new_index)
+static int same_state(const PState* a, const PState* b)
 {
-    unsigned int h = hash_state(&pool[new_index]) & (HASH_SIZE - 1);
+    unsigned long long x;
+    unsigned long long y;
+    memcpy(&x, a, sizeof(x));
+    memcpy(&y, b, sizeof(y));
+    return x == y;
+}
+
+static int visited_insert(int* table, unsigned int mask, const PState* pool, int new_index)
+{
+    unsigned int h = hash_state(&pool[new_index]) & mask;
     while (table[h] != -1)
     {
-        if (memcmp(&pool[table[h]], &pool[new_index], sizeof(PState)) == 0)
+        if (same_state(&pool[table[h]], &pool[new_index]))
         {
             return 0;
         }
-        h = (h + 1) & (HASH_SIZE - 1);
+        h = (h + 1) & mask;
     }
     table[h] = new_index;
     return 1;
+}
+
+static int* table_grow(int* table, unsigned int* size, const PState* pool, int count)
+{
+    unsigned int nsize = *size * 2u;
+    int* nt = (int*)malloc((size_t)nsize * sizeof(int));
+    if (!nt)
+    {
+        return NULL;
+    }
+    memset(nt, 0xFF, (size_t)nsize * sizeof(int));
+    for (int k = 0; k < count; k++)
+    {
+        unsigned int h = hash_state(&pool[k]) & (nsize - 1);
+        while (nt[h] != -1)
+        {
+            h = (h + 1) & (nsize - 1);
+        }
+        nt[h] = k;
+    }
+    free(table);
+    *size = nsize;
+    return nt;
 }
 
 static int is_solvable(const GameState* s)
@@ -557,33 +589,42 @@ static int is_solvable(const GameState* s)
     memset(&start, 0, sizeof(start));
     int nb = 0;
 
-    for (int r = 0; r < s->rows; r++){
-        for (int c = 0; c < s->cols; c++){
+    for (int r = 0; r < s->rows; r++)
+    {
+        for (int c = 0; c < s->cols; c++)
+        {
             char ch = s->grid[r][c];
             wall[r][c] = (ch == TILE_WALL);
             target[r][c] = (ch == TILE_TARGET || ch == TILE_BOX_ON_TARGET || ch == TILE_PLAYER_ON_TARGET);
-            if (ch == TILE_BOX || ch == TILE_BOX_ON_TARGET){
+            if (ch == TILE_BOX || ch == TILE_BOX_ON_TARGET)
+            {
                 if (nb == MAXB) { return 0; }
                 start.box[nb++] = (unsigned short)(r * MAX_COLS + c);
             }
         }
     }
     start.player = (unsigned short)(s->player_row * MAX_COLS + s->player_col);
-    for (int i = 1; i < nb; i++) {
+    for (int i = 1; i < nb; i++)
+    {
         unsigned short v = start.box[i];
         int j = i - 1;
         while (j >= 0 && start.box[j] > v) { start.box[j + 1] = start.box[j]; j--; }
         start.box[j + 1] = v;
     }
 
+    int bits = g_table_start_bits;
+    if (bits < TABLE_MIN_BITS) { bits = TABLE_MIN_BITS; }
+    if (bits > TABLE_MAX_BITS) { bits = TABLE_MAX_BITS; }
+    unsigned int tsize = 1u << bits;
+
     PState* pool = (PState*)malloc((size_t)BFS_LIMIT * sizeof(PState));
-    int* table = (int*)malloc((size_t)HASH_SIZE * sizeof(int));
+    int* table = (int*)malloc((size_t)tsize * sizeof(int));
     if (!pool || !table) { free(pool); free(table); return 0; }
-    memset(table, 0xFF, (size_t)HASH_SIZE * sizeof(int)); 
+    memset(table, 0xFF, (size_t)tsize * sizeof(int));
 
     int head = 0, tail = 0;
     pool[tail] = start;
-    visited_insert(table, pool, tail);
+    visited_insert(table, tsize - 1, pool, tail);
     tail++;
 
     while (head < tail)
@@ -597,6 +638,8 @@ static int is_solvable(const GameState* s)
         }
         if (win) { free(pool); free(table); return 1; }
 
+        PState cand[4];
+        int ncand = 0;
         int pr = cur.player / MAX_COLS, pc = cur.player % MAX_COLS;
         for (int d = 0; d < 4; d++)
         {
@@ -627,9 +670,24 @@ static int is_solvable(const GameState* s)
             }
             nx.player = (unsigned short)pos;
 
-            if (tail >= BFS_LIMIT) { continue; }
-            pool[tail] = nx;
-            if (visited_insert(table, pool, tail)) { tail++; }
+            cand[ncand++] = nx;
+        }
+
+        for (int k = 0; k < ncand; k++)
+        {
+            if (tail >= BFS_LIMIT) { break; }
+            pool[tail] = cand[k];
+            if (visited_insert(table, tsize - 1, pool, tail))
+            {
+                tail++;
+                if ((unsigned int)tail * 2u > tsize && bits < TABLE_MAX_BITS)
+                {
+                    int* grown = table_grow(table, &tsize, pool, tail);
+                    if (!grown) { free(pool); free(table); return 0; }
+                    table = grown;
+                    bits++;
+                }
+            }
         }
     }
     free(pool); free(table);
@@ -1229,6 +1287,9 @@ int main(int argc, char** argv)
 {
     if (argc > 1 && strcmp(argv[1], "-time") == 0)
     {
+        if (argc > 3) {
+            g_table_start_bits = atoi(argv[3]);
+        }
         run_time(argc > 2 ? atoi(argv[2]) : 100);
         return 0;
     }
