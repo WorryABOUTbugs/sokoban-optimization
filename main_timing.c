@@ -523,6 +523,7 @@ typedef struct
 typedef char pstate_must_8_bytes[(sizeof(PState) == 8) ? 1 : -1];
 
 static int g_table_start_bits = 18;
+static int g_probes = 1;
 
 static unsigned int hash_state(const PState* p)
 {
@@ -576,6 +577,33 @@ static int* table_grow(int* table, unsigned int* size, const PState* pool, int c
     free(table);
     *size = nsize;
     return nt;
+}
+
+static int insert_candidates(PState* pool, int* tail, int** table, unsigned int* tsize, int* bits, const PState* cand, int ncand)
+{
+    for (int k = 0; k < ncand; k++)
+    {
+        if (*tail >= BFS_LIMIT)
+        {
+            break;
+        }
+        pool[*tail] = cand[k];
+        if (visited_insert(*table, *tsize - 1, pool, *tail))
+        {
+            (*tail)++;
+            if ((unsigned int)(*tail) * 2u > *tsize && *bits < TABLE_MAX_BITS)
+            {
+                int* grown = table_grow(*table, tsize, pool, *tail);
+                if (!grown)
+                {
+                    return 0;
+                }
+                *table = grown;
+                (*bits)++;
+            }
+        }
+    }
+    return 1;
 }
 
 static int is_solvable(const GameState* s)
@@ -671,23 +699,23 @@ static int is_solvable(const GameState* s)
             nx.player = (unsigned short)pos;
 
             cand[ncand++] = nx;
+            if (g_probes == 0)
+            {
+                if (!insert_candidates(pool, &tail, &table, &tsize, &bits, cand, ncand))
+                {
+                    free(pool);
+                    free(table);
+                    return 0;
+                }
+                ncand = 0;
+            }
         }
 
-        for (int k = 0; k < ncand; k++)
+        if (!insert_candidates(pool, &tail, &table, &tsize, &bits, cand, ncand))
         {
-            if (tail >= BFS_LIMIT) { break; }
-            pool[tail] = cand[k];
-            if (visited_insert(table, tsize - 1, pool, tail))
-            {
-                tail++;
-                if ((unsigned int)tail * 2u > tsize && bits < TABLE_MAX_BITS)
-                {
-                    int* grown = table_grow(table, &tsize, pool, tail);
-                    if (!grown) { free(pool); free(table); return 0; }
-                    table = grown;
-                    bits++;
-                }
-            }
+            free(pool);
+            free(table);
+            return 0;
         }
     }
     free(pool); free(table);
@@ -1289,7 +1317,11 @@ int main(int argc, char** argv)
     {
         if (argc > 3) {
             g_table_start_bits = atoi(argv[3]);
+            if (argc > 4) {
+                g_probes = atoi(argv[4]);
+            }
         }
+
         run_time(argc > 2 ? atoi(argv[2]) : 100);
         return 0;
     }
